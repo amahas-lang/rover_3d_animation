@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Animated Procedural Rover</title>
+  <style>
+    html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#080808; color:#e8eaf0; font-family:Arial, sans-serif; }
+    #wrap { position:relative; width:100%; height:100%; background:#0b0d12; }
+    #c { width:100%; height:100%; display:block; }
+    .badge { position:absolute; top:16px; left:16px; padding:8px 12px; border:1px solid rgba(46,207,207,.35); color:#2ecfcf; background:rgba(8,8,8,.8); border-radius:6px; font-weight:700; }
+    .hint { position:absolute; bottom:16px; left:50%; transform:translateX(-50%); color:#89909d; background:rgba(8,8,8,.8); border:1px solid rgba(46,207,207,.25); padding:8px 14px; border-radius:20px; font-size:13px; }
+    .panel { position:absolute; top:16px; right:16px; display:flex; gap:8px; }
+    button { background:#141414; color:#2ecfcf; border:1px solid rgba(46,207,207,.35); padding:8px 12px; border-radius:6px; cursor:pointer; }
+  </style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div class="badge">Animated procedural rover</div>
+  <div class="panel">
+    <button onclick="driveMode=!driveMode">Toggle drive</button>
+    <button onclick="autoCamera=!autoCamera">Toggle camera</button>
+  </div>
+  <div class="hint">The rover is built from code only: no GLB, GLTF, STL, or Blender model.</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+var renderer, camera, scene, grid;
+var rover, turretGroup, upperArmPivot, forearmPivot, wristPivot;
+var trackBars = [];
+var autoCamera = true;
+var driveMode = true;
+var clock = new THREE.Clock();
+
+function newMat(col, rough, metal, emissive) {
+  return new THREE.MeshStandardMaterial({
+    color: col,
+    roughness: rough ?? 0.7,
+    metalness: metal ?? 0.15,
+    emissive: emissive ?? 0x000000
+  });
+}
+
+function addMesh(geo, mat, parent) {
+  var m = new THREE.Mesh(geo, mat);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+function buildTrack() {
+  var g = new THREE.Group();
+  var TL = 1.5, TH = 0.30, TW = 0.26, WR = 0.15;
+
+  addMesh(new THREE.BoxGeometry(TL - WR * 1.8, TH, TW), newMat(0x1a1d24, .85, .1), g);
+
+  [-1, 1].forEach(function(sx) {
+    var hub = addMesh(new THREE.CylinderGeometry(WR, WR, TW, 24), newMat(0x1a1d24, .85, .1), g);
+    hub.rotation.x = Math.PI / 2;
+    hub.position.x = sx * (TL / 2 - WR * .9);
+
+    var ring = addMesh(new THREE.TorusGeometry(WR * .72, .018, 6, 20), newMat(0x111318, .95, 0), g);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.x = sx * (TL / 2 - WR * .9);
+  });
+
+  for (var j = 0; j < 13; j++) {
+    var fx = ((j / 12) - .5) * (TL - WR * 2);
+    var top = addMesh(new THREE.BoxGeometry(.06, .035, TW + .025), newMat(0x111318, .95, 0), g);
+    top.position.set(fx, TH / 2 + .01, 0);
+    trackBars.push(top);
+
+    var bot = addMesh(new THREE.BoxGeometry(.06, .035, TW + .025), newMat(0x111318, .95, 0), g);
+    bot.position.set(fx, -TH / 2 - .01, 0);
+    trackBars.push(bot);
+  }
+  return g;
+}
+
+function buildRover() {
+  rover = new THREE.Group();
+  scene.add(rover);
+
+  [
+    {x:-1.10, y:0, z:-0.80}, {x:1.10, y:0, z:-0.80},
+    {x:-1.10, y:0, z:0.80},  {x:1.10, y:0, z:0.80}
+  ].forEach(function(p) {
+    var tm = buildTrack();
+    tm.position.set(p.x, p.y, p.z);
+    rover.add(tm);
+  });
+
+  var CW = 1.75, CH = .38, CD = 2.1;
+  var body = addMesh(new THREE.BoxGeometry(CW, CH, CD), newMat(0x1e2530, .75, .35), rover);
+  body.position.y = .32;
+
+  var topPlate = addMesh(new THREE.BoxGeometry(CW - .08, .055, CD - .08), newMat(0x1e2530, .75, .35), rover);
+  topPlate.position.y = .32 + CH / 2 + .022;
+
+  var camPanel = addMesh(new THREE.BoxGeometry(.30, .18, .04), newMat(0x0a0e16, .8, .3), rover);
+  camPanel.position.set(0, .35, -CD / 2 - .02);
+
+  var lens = addMesh(new THREE.CylinderGeometry(.048, .048, .055, 18), newMat(0x1a44cc, .15, .9, 0x0a1a44), rover);
+  lens.rotation.x = Math.PI / 2;
+  lens.position.set(0, .35, -CD / 2 - .055);
+
+  turretGroup = new THREE.Group();
+  turretGroup.position.set(0, .32 + CH / 2 + .07, 0);
+  rover.add(turretGroup);
+  addMesh(new THREE.CylinderGeometry(.36, .40, .09, 32), newMat(0x8090a0, .45, .65), turretGroup);
+
+  var shoulder = new THREE.Group();
+  shoulder.position.set(.12, .10, -.06);
+  turretGroup.add(shoulder);
+
+  upperArmPivot = new THREE.Group();
+  shoulder.add(upperArmPivot);
+  var upper = addMesh(new THREE.BoxGeometry(.105, .74, .105), newMat(0xb8c4d0, .35, .6), upperArmPivot);
+  upper.position.y = .37;
+
+  forearmPivot = new THREE.Group();
+  forearmPivot.position.y = .80;
+  upperArmPivot.add(forearmPivot);
+  var fore = addMesh(new THREE.BoxGeometry(.09, .60, .09), newMat(0xb8c4d0, .35, .6), forearmPivot);
+  fore.position.y = .30;
+
+  wristPivot = new THREE.Group();
+  wristPivot.position.y = .62;
+  forearmPivot.add(wristPivot);
+  addMesh(new THREE.BoxGeometry(.115, .115, .145), newMat(0x111318, .6, .3), wristPivot);
+
+  var wristLink = addMesh(new THREE.BoxGeometry(.075, .32, .075), newMat(0xc8d4e0, .2, .85), wristPivot);
+  wristLink.position.y = .18;
+}
+
+function init() {
+  var wrap = document.getElementById('wrap');
+  var canvas = document.getElementById('c');
+
+  renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.setClearColor(0x0b0d12, 1);
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0b0d12);
+  scene.fog = new THREE.FogExp2(0x0b0d12, .012);
+
+  camera = new THREE.PerspectiveCamera(42, wrap.offsetWidth / wrap.offsetHeight, .05, 300);
+
+  scene.add(new THREE.AmbientLight(0x3a4a5a, 1.1));
+  var key = new THREE.DirectionalLight(0xfff5e8, 1.7);
+  key.position.set(6, 10, 5);
+  key.castShadow = true;
+  scene.add(key);
+  var fill = new THREE.DirectionalLight(0x4466aa, .5);
+  fill.position.set(-8, 3, -4);
+  scene.add(fill);
+
+  grid = new THREE.GridHelper(30, 30, 0x2ecfcf, 0x0a2020);
+  grid.material.opacity = .25;
+  grid.material.transparent = true;
+  grid.position.y = -.18;
+  scene.add(grid);
+
+  var ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), newMat(0x080a0e, 1, 0));
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -.19;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  buildRover();
+
+  function resize() {
+    var w = wrap.offsetWidth, h = wrap.offsetHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  animate();
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  var t = clock.getElapsedTime();
+
+  if (driveMode) {
+    // Makes the entire rover drive in a loop.
+    rover.position.x = Math.sin(t * .7) * 2.2;
+    rover.position.z = Math.cos(t * .7) * 1.0;
+    rover.rotation.y = Math.sin(t * .7) * .35;
+    rover.position.y = Math.sin(t * 7) * .018;
+
+    // Makes tread bars pulse/shift so the tracks feel alive.
+    for (var i = 0; i < trackBars.length; i++) {
+      trackBars[i].position.x += Math.sin(t * 8 + i) * .0008;
+      trackBars[i].rotation.z = Math.sin(t * 12 + i) * .05;
+    }
+
+    // Makes turret and arm move independently.
+    turretGroup.rotation.y = Math.sin(t * .9) * .8;
+    upperArmPivot.rotation.z = THREE.MathUtils.degToRad(-35 + Math.sin(t * 1.3) * 15);
+    forearmPivot.rotation.z = THREE.MathUtils.degToRad(60 + Math.sin(t * 1.6) * 20);
+    wristPivot.rotation.z = THREE.MathUtils.degToRad(-30 + Math.sin(t * 2.1) * 18);
+  }
+
+  if (autoCamera) {
+    camera.position.set(Math.sin(t * .25) * 6.5, 3.2, Math.cos(t * .25) * 6.5);
+    camera.lookAt(0, .65, 0);
+  }
+
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
